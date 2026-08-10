@@ -48,6 +48,7 @@ flags.DEFINE_integer('dataset_replace_interval', 1000, 'Dataset replace interval
 flags.DEFINE_string('ogbench_dataset_dir', None, 'OGBench dataset directory')
 
 flags.DEFINE_integer('horizon_length', 5, 'action chunking length.')
+flags.DEFINE_string('chunk_sizes', '1,3,5', 'Chunk sizes for AQC.')
 flags.DEFINE_bool('sparse', False, "make the task sparse reward")
 
 flags.DEFINE_bool('save_all_online_states', False, "save all trajectories to npy")
@@ -103,6 +104,8 @@ def main(_):
     
     discount = FLAGS.discount
     config["horizon_length"] = FLAGS.horizon_length
+    if config["agent_name"] == "aqc":
+        config["chunk_sizes"] = tuple(map(int, FLAGS.chunk_sizes.split(',')))
 
     # handle dataset
     def process_train_dataset(ds):
@@ -223,9 +226,13 @@ def main(_):
         
         # during online rl, the action chunk is executed fully
         if len(action_queue) == 0:
-            action = agent.sample_actions(observations=ob, rng=key)
+            if hasattr(agent, 'sample_actions_adaptive'):
+                action, k_star = agent.sample_actions_adaptive(observations=ob, rng=key)
+                action_chunk = np.array(action).reshape(-1, action_dim)[:int(k_star)]
+            else:
+                action = agent.sample_actions(observations=ob, rng=key)
+                action_chunk = np.array(action).reshape(-1, action_dim)
 
-            action_chunk = np.array(action).reshape(-1, action_dim)
             for action in action_chunk:
                 action_queue.append(action)
         action = action_queue.pop(0)

@@ -60,7 +60,12 @@ def evaluate(
     Returns:
         A tuple containing the statistics, trajectories, and rendered videos.
     """
-    actor_fn = supply_rng(agent.sample_actions, rng=jax.random.PRNGKey(np.random.randint(0, 2**32)))
+    if hasattr(agent, 'sample_actions_adaptive'):
+        actor_fn = supply_rng(agent.sample_actions_adaptive, rng=jax.random.PRNGKey(np.random.randint(0, 2**32)))
+        is_adaptive = True
+    else:
+        actor_fn = supply_rng(agent.sample_actions, rng=jax.random.PRNGKey(np.random.randint(0, 2**32)))
+        is_adaptive = False
     trajs = []
     stats = defaultdict(list)
 
@@ -85,11 +90,15 @@ def evaluate(
         gripper_contact_length = 0
         while not done:
             
-            action = actor_fn(observations=observation)
-
             if len(action_queue) == 0:
                 have_new_action = True
-                action = np.array(action).reshape(-1, action_dim)
+                if is_adaptive:
+                    action, k_star = actor_fn(observations=observation)
+                    action = np.array(action).reshape(-1, action_dim)[:int(k_star)]
+                else:
+                    action = actor_fn(observations=observation)
+                    action = np.array(action).reshape(-1, action_dim)
+                
                 action_chunk_len = action.shape[0]
                 for a in action:
                     action_queue.append(a)
