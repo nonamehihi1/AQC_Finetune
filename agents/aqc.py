@@ -345,9 +345,6 @@ class AQCAgent(flax.struct.PyTreeNode):
             v_k = self.network.select(f'value_k{k}')(observations)
             m_k = self.network.select(f'moment_k{k}')(observations)
             
-            # Ensure m_k is positive, add epsilon for numerical stability
-            m_k = jnp.maximum(m_k, 0.0) + 1e-6
-            
             # Predict Q^k for all candidates
             # actions shape: (batch_size, num_samples, action_dim * horizon_length)
             actions_k = jnp.reshape(
@@ -357,23 +354,27 @@ class AQCAgent(flax.struct.PyTreeNode):
             
             q_k = self.network.select(f'critic_k{k}')(obs_expanded, actions=actions_k)
             if self.config['q_agg'] == 'min':
-                q_k = q_k.min(axis=0) # shape: (batch_size, num_samples)
+                q_k = q_k.min(axis=0) # shape: (*bshape, num_samples)
             else:
                 q_k = q_k.mean(axis=0)
                 
-            # Compute Advantage
-            a_k = q_k - v_k # (batch_size, num_samples)
+            # Broadcast to match q_k shape (*bshape, num_samples)
+            v_k = jnp.expand_dims(v_k, axis=-1)
+            m_k = jnp.expand_dims(m_k, axis=-1)
             
-            # Compute z-score using learned variance
-            z_k = a_k / jnp.sqrt(m_k) # (batch_size, num_samples)
+            # Compute Advantage
+            a_k = q_k - v_k
+            
+            # Compute z-score using learned variance (cộng thêm 1e-6 chống chia cho 0)
+            z_k = a_k / jnp.sqrt(m_k + 1e-6)
             z_k_list.append(z_k)
             
-        # z_k_list is a list of len(chunk_sizes) with tensors of shape (batch_size, num_samples)
-        z_scores = jnp.stack(z_k_list, axis=0) # (len(chunk_sizes), batch_size, num_samples)
+        # z_k_list is a list of len(chunk_sizes) with tensors of shape (*bshape, num_samples)
+        z_scores = jnp.stack(z_k_list, axis=-2) # (*bshape, len(chunk_sizes), num_samples)
         
         # We want to find (k_idx, sample_idx) that maximizes z_score for each batch element
-        # Reshape to (batch_size, len(chunk_sizes) * num_samples)
-        z_scores_flat = jnp.transpose(z_scores, (1, 0, 2)).reshape(observations.shape[0], -1)
+        bshape = observations.shape[:-1]
+        z_scores_flat = z_scores.reshape((*bshape, -1))
         
         best_flat_idx = jnp.argmax(z_scores_flat, axis=-1)
         
@@ -385,8 +386,11 @@ class AQCAgent(flax.struct.PyTreeNode):
         k_star = chunk_sizes_array[best_k_idx]
         
         # Select the best action
-        batch_indices = jnp.arange(observations.shape[0])
-        best_actions = actions[batch_indices, best_sample_idx]
+        flat_best_sample_idx = best_sample_idx.reshape(-1)
+        bsize = len(flat_best_sample_idx)
+        
+        flat_actions = actions.reshape((bsize, self.config["actor_num_samples"], -1))
+        best_actions = flat_actions[jnp.arange(bsize), flat_best_sample_idx, :].reshape((*bshape, -1))
         
         return best_actions, k_star
 
