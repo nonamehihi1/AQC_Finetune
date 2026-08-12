@@ -1,47 +1,46 @@
 <div align="center">
 
 # AQC: Adaptive Q-Chunking with Learned Variance Normalization
-
-### Extending [Q-Chunking (NeurIPS 2025)](https://arxiv.org/abs/2507.07969) with adaptive chunk selection
+### Mở rộng từ [Q-Chunking (NeurIPS 2025)](https://arxiv.org/abs/2507.07969) với khả năng lựa chọn chunk thích ứng
 
 </div>
 
 ---
 
-## General Idea
+## Ý Tưởng Tổng Quan (General Idea)
 
-### Background: Q-Chunking (QC)
+### Bối cảnh: Q-Chunking (QC)
 
-Q-Chunking (Li et al., NeurIPS 2025) proposes **action chunking for RL**: instead of selecting one action per timestep, the agent commits to a sequence of $h$ actions (a "chunk"), enabling temporally coherent exploration and leveraging offline demonstration data more effectively. Combined with Flow Q-Learning (FQL), QC achieves state-of-the-art results on dexterous manipulation tasks in OGBench.
+Q-Chunking (Li et al., NeurIPS 2025) đề xuất **action chunking cho RL**: thay vì chọn một hành động ở mỗi bước thời gian, tác tử cam kết thực hiện một chuỗi $h$ hành động (một "chunk"), cho phép khám phá có tính nhất quán về mặt thời gian và tận dụng dữ liệu mẫu offline hiệu quả hơn. Kết hợp với Flow Q-Learning (FQL), QC đạt được kết quả SOTA trên các tác vụ thao tác khéo léo trong OGBench.
 
-**Key limitation**: QC uses a **fixed chunk size** $h$ for all states. In practice, some states benefit from long chunks (e.g., reaching motions in free space), while others require short chunks (e.g., precise contact with an object). A fixed $h$ is suboptimal — too long causes sluggish reactions near contacts, too short wastes the benefits of temporal abstraction.
+**Hạn chế chính**: QC sử dụng **kích thước chunk cố định** $h$ cho tất cả các trạng thái. Trong thực tế, một số trạng thái sẽ hưởng lợi từ chunk dài (ví dụ: các chuyển động tiếp cận trong không gian tự do), trong khi các trạng thái khác lại cần chunk ngắn (ví dụ: khi thao tác tiếp xúc chính xác với vật thể). Một $h$ cố định là không tối ưu — quá dài gây ra phản ứng chậm chạp gần các điểm tiếp xúc, quá ngắn làm lãng phí lợi ích của abstraction theo thời gian.
 
-### Our Proposal: Adaptive Q-Chunking (AQC)
+### Đề Xuất Của Chúng Tôi: Adaptive Q-Chunking (AQC)
 
-We extend QC with **state-dependent adaptive chunk selection**. The core idea:
+Chúng tôi mở rộng QC với **khả năng lựa chọn chunk thích ứng phụ thuộc vào trạng thái**. Ý tưởng cốt lõi:
 
-1. **Multi-scale critics**: Train separate $Q^k(s, a_{1:k})$ for each candidate chunk size $k \in K = \{1, 3, 5\}$, alongside $V^k(s)$ (value) and $M^k(s)$ (second moment) networks.
+1. **Multi-scale critics (Các mạng critic đa quy mô)**: Huấn luyện các mạng $Q^k(s, a_{1:k})$ riêng biệt cho mỗi kích thước chunk ứng viên $k \in K = \{1, 3, 5\}$, cùng với mạng giá trị $V^k(s)$ và mạng moment bậc hai $M^k(s)$.
 
-2. **Learned Variance Normalization (LVN)**: Instead of computing Z-scores from sample statistics (which are noisy when $N$ is small), we learn the advantage variance directly:
+2. **Learned Variance Normalization (LVN) (Chuẩn hóa phương sai học được)**: Thay vì tính Z-scores từ các số liệu thống kê mẫu (thường bị nhiễu khi $N$ nhỏ), chúng tôi học phương sai của advantage trực tiếp:
 
 $$\tilde{z}^k(s, a) = \frac{Q^k(s, a) - V^k(s)}{\sqrt{M^k(s)} + \epsilon}$$
 
-where $M^k(s) \approx \mathbb{E}_{a \sim \pi}[(A^k(s,a))^2]$ is the learned second moment.
+trong đó $M^k(s) \approx \mathbb{E}_{a \sim \pi}[(A^k(s,a))^2]$ là moment bậc hai học được.
 
-3. **Adaptive selection**: At inference, the agent samples $N$ candidate action sequences, evaluates the normalized advantage $\tilde{z}^k$ across all chunk sizes, and selects both the best chunk size $k^*$ and the best action sequence jointly.
+3. **Lựa chọn thích ứng**: Tại bước suy luận (inference), tác tử lấy mẫu $N$ chuỗi hành động ứng viên, đánh giá advantage đã chuẩn hóa $\tilde{z}^k$ trên tất cả các kích thước chunk, và chọn đồng thời cả kích thước chunk tốt nhất $k^*$ và chuỗi hành động tốt nhất.
 
-### Why This Matters
+### Tại Sao Lại Quan Trọng
 
-| Aspect | QC (Original) | AQC (Ours) |
+| Khía cạnh | QC (Gốc) | AQC (Của chúng tôi) |
 |--------|:---:|:---:|
-| Chunk size | Fixed $h$ for all states | Adaptive $k^*$ per state |
-| Z-score normalization | Sample statistics (noisy when $N$ small) | Learned variance (stable) |
-| Contact-rich tasks | Must use small $h$ globally | Can use large $k$ in free space, small $k$ near contacts |
-| Online fine-tuning | Z-score drifts with policy change | Learned variance adapts smoothly |
+| Kích thước chunk | Cố định $h$ cho mọi trạng thái | Thích ứng $k^*$ cho từng trạng thái |
+| Chuẩn hóa Z-score | Thống kê mẫu (nhiễu khi $N$ nhỏ) | Phương sai học được (ổn định) |
+| Tác vụ nhiều va chạm | Phải dùng $h$ nhỏ cho toàn bộ | Có thể dùng $k$ lớn ở không gian trống, $k$ nhỏ khi gần va chạm |
+| Tinh chỉnh online | Z-score bị trôi (drift) khi policy đổi | Phương sai học được thích ứng mượt mà |
 
-### Architecture Diagram
+### Sơ Đồ Kiến Trúc
 
-```
+```text
                     State s_t
                        │
         ┌──────────────┼──────────────┐
@@ -56,51 +55,51 @@ where $M^k(s) \approx \mathbb{E}_{a \sim \pi}[(A^k(s,a))^2]$ is the learned seco
         └──────────────┼──────────────┘
                        ▼
               k* = argmax z̃^k
-              (select best chunk size + action)
+              (chọn chunk size + action tốt nhất)
 ```
 
 ---
 
-## Repository Structure
+## Cấu Trúc Repository
 
-```
+```text
 .
 ├── agents/
-│   ├── acfql.py          # ACFQL — Q-Chunking baseline (fixed chunk)
-│   ├── aqc.py            # AQC — Adaptive Q-Chunking with LVN (our method)
-│   ├── acrlpd.py         # RLPD-based agent
-│   └── model.py          # Shared network architectures
-├── envs/                 # Environment utilities (OGBench, Robomimic)
-├── utils/                # Dataset, Flax utilities, network definitions
-├── evaluation.py         # Evaluation loop (supports adaptive chunk selection)
-├── main.py               # Main training script (offline + online RL)
-├── main_online.py        # Online-only training script
-├── AQC_proposed_improvements.md   # Detailed proposal document
-├── PROGRESS_REPORT.md    # Current progress and next steps
-└── requirements.txt      # Dependencies
+│   ├── acfql.py          # ACFQL — Q-Chunking baseline (chunk cố định)
+│   ├── aqc.py            # AQC — Adaptive Q-Chunking với LVN (phương pháp của chúng tôi)
+│   ├── acrlpd.py         # Agent dựa trên RLPD
+│   └── model.py          # Kiến trúc mạng dùng chung
+├── envs/                 # Các tiện ích môi trường (OGBench, Robomimic)
+├── utils/                # Dataset, tiện ích Flax, định nghĩa mạng
+├── evaluation.py         # Vòng lặp đánh giá (hỗ trợ chọn chunk thích ứng)
+├── main.py               # Script huấn luyện chính (offline + online RL)
+├── main_online.py        # Script huấn luyện chỉ dùng online
+├── AQC_proposed_improvements.md   # Tài liệu chi tiết các đề xuất
+├── PROGRESS_REPORT.md    # Tiến độ hiện tại và các bước tiếp theo
+└── requirements.txt      # Các thư viện phụ thuộc
 ```
 
-### Key Files
+### Các File Quan Trọng
 
-| File | Description |
+| File | Mô tả |
 |------|-------------|
-| `agents/aqc.py` | **Core contribution** — AQC agent with multi-scale critics ($Q^k$, $V^k$, $M^k$) and adaptive chunk selection via learned variance normalization |
-| `agents/acfql.py` | Baseline — original Q-Chunking with fixed chunk size |
-| `evaluation.py` | Modified to support `sample_actions_adaptive()` — automatically detects AQC and uses adaptive chunk selection during eval |
-| `main.py` | Training loop with `--chunk_sizes` flag for specifying candidate chunk sizes |
+| `agents/aqc.py` | **Đóng góp chính** — Agent AQC với multi-scale critics ($Q^k$, $V^k$, $M^k$) và chọn chunk thích ứng qua LVN |
+| `agents/acfql.py` | Baseline — Q-Chunking gốc với chunk size cố định |
+| `evaluation.py` | Đã sửa đổi để hỗ trợ `sample_actions_adaptive()` — tự động phát hiện AQC và dùng chọn chunk thích ứng khi đánh giá |
+| `main.py` | Vòng lặp huấn luyện với cờ `--chunk_sizes` để chỉ định các kích thước chunk ứng viên |
 
 ---
 
-## How to Run
+## Hướng Dẫn Chạy
 
-### Installation
+### Cài Đặt
 ```bash
 git clone https://github.com/nonamehihi1/AQC_Finetune.git
 cd AQC_Finetune
 pip install -r requirements.txt
 ```
 
-### Run AQC (Our Method)
+### Chạy AQC (Phương Pháp Của Chúng Tôi)
 ```bash
 MUJOCO_GL=egl python main.py \
     --agent=agents/aqc.py \
@@ -114,7 +113,7 @@ MUJOCO_GL=egl python main.py \
     --seed=1
 ```
 
-### Run Baseline (ACFQL — Fixed Chunk)
+### Chạy Baseline (ACFQL — Chunk Cố Định)
 ```bash
 MUJOCO_GL=egl python main.py \
     --agent=agents/acfql.py \
@@ -129,12 +128,12 @@ MUJOCO_GL=egl python main.py \
 
 ---
 
-## References
+## Tham Khảo (References)
 
 - **Q-Chunking**: Li et al., "Reinforcement Learning with Action Chunking", NeurIPS 2025. [[paper](https://arxiv.org/abs/2507.07969)] [[website](https://colinqiyangli.github.io/qc/)]
 - **FQL**: Park et al., "Flow Q-Learning". [[code](https://github.com/seohongpark/fql)]
 - **OGBench**: Park et al., "OGBench: Benchmarking Offline Goal-Conditioned RL". [[code](https://github.com/seohongpark/ogbench)]
 
-## Acknowledgments
+## Lời Cảm Ơn (Acknowledgments)
 
-This codebase is built on top of [Q-Chunking](https://github.com/ColinQiyangLi/qc) and [FQL](https://github.com/seohongpark/fql). The two `rlpd_*` folders are directly taken from [RLPD](https://github.com/ikostrikov/rlpd).
+Codebase này được xây dựng dựa trên [Q-Chunking](https://github.com/ColinQiyangLi/qc) và [FQL](https://github.com/seohongpark/fql). Hai thư mục `rlpd_*` được lấy trực tiếp từ [RLPD](https://github.com/ikostrikov/rlpd).
