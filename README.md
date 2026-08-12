@@ -1,82 +1,140 @@
 <div align="center">
 
-# [Reinforcement Learning with Action Chunking](https://arxiv.org/abs/2507.07969)
+# AQC: Adaptive Q-Chunking with Learned Variance Normalization
 
-## [[website](https://colinqiyangli.github.io/qc/)]      [[pdf](https://arxiv.org/pdf/2507.07969)]
+### Extending [Q-Chunking (NeurIPS 2025)](https://arxiv.org/abs/2507.07969) with adaptive chunk selection
 
 </div>
 
-<p align="center">
-  <a href="https://colinqiyangli.github.io/qc/">
-    <img alt="teaser figure" src="./assets/teaser.png" width="48%">
-  </a>
-  <a href="https://colinqiyangli.github.io/qc/">
-    <img alt="aggregated results" src="./assets/agg.png" width="48%">
-  </a>
-</p>
+---
 
+## General Idea
 
-## Overview
-Q-chunking runs RL on a *temporally extended action (action chunking) space* with an expressive behavior constraint to leverage prior data for improved exploration and online sample efficiency.
+### Background: Q-Chunking (QC)
 
-## Installation
+Q-Chunking (Li et al., NeurIPS 2025) proposes **action chunking for RL**: instead of selecting one action per timestep, the agent commits to a sequence of $h$ actions (a "chunk"), enabling temporally coherent exploration and leveraging offline demonstration data more effectively. Combined with Flow Q-Learning (FQL), QC achieves state-of-the-art results on dexterous manipulation tasks in OGBench.
+
+**Key limitation**: QC uses a **fixed chunk size** $h$ for all states. In practice, some states benefit from long chunks (e.g., reaching motions in free space), while others require short chunks (e.g., precise contact with an object). A fixed $h$ is suboptimal — too long causes sluggish reactions near contacts, too short wastes the benefits of temporal abstraction.
+
+### Our Proposal: Adaptive Q-Chunking (AQC)
+
+We extend QC with **state-dependent adaptive chunk selection**. The core idea:
+
+1. **Multi-scale critics**: Train separate $Q^k(s, a_{1:k})$ for each candidate chunk size $k \in K = \{1, 3, 5\}$, alongside $V^k(s)$ (value) and $M^k(s)$ (second moment) networks.
+
+2. **Learned Variance Normalization (LVN)**: Instead of computing Z-scores from sample statistics (which are noisy when $N$ is small), we learn the advantage variance directly:
+
+$$\tilde{z}^k(s, a) = \frac{Q^k(s, a) - V^k(s)}{\sqrt{M^k(s)} + \epsilon}$$
+
+where $M^k(s) \approx \mathbb{E}_{a \sim \pi}[(A^k(s,a))^2]$ is the learned second moment.
+
+3. **Adaptive selection**: At inference, the agent samples $N$ candidate action sequences, evaluates the normalized advantage $\tilde{z}^k$ across all chunk sizes, and selects both the best chunk size $k^*$ and the best action sequence jointly.
+
+### Why This Matters
+
+| Aspect | QC (Original) | AQC (Ours) |
+|--------|:---:|:---:|
+| Chunk size | Fixed $h$ for all states | Adaptive $k^*$ per state |
+| Z-score normalization | Sample statistics (noisy when $N$ small) | Learned variance (stable) |
+| Contact-rich tasks | Must use small $h$ globally | Can use large $k$ in free space, small $k$ near contacts |
+| Online fine-tuning | Z-score drifts with policy change | Learned variance adapts smoothly |
+
+### Architecture Diagram
+
+```
+                    State s_t
+                       │
+        ┌──────────────┼──────────────┐
+        ▼              ▼              ▼
+    Q^1(s,a_{1:1})  Q^3(s,a_{1:3})  Q^5(s,a_{1:5})
+    V^1(s)          V^3(s)          V^5(s)
+    M^1(s)          M^3(s)          M^5(s)
+        │              │              │
+        ▼              ▼              ▼
+    z̃^1 = A^1/√M^1  z̃^3 = A^3/√M^3  z̃^5 = A^5/√M^5
+        │              │              │
+        └──────────────┼──────────────┘
+                       ▼
+              k* = argmax z̃^k
+              (select best chunk size + action)
+```
+
+---
+
+## Repository Structure
+
+```
+.
+├── agents/
+│   ├── acfql.py          # ACFQL — Q-Chunking baseline (fixed chunk)
+│   ├── aqc.py            # AQC — Adaptive Q-Chunking with LVN (our method)
+│   ├── acrlpd.py         # RLPD-based agent
+│   └── model.py          # Shared network architectures
+├── envs/                 # Environment utilities (OGBench, Robomimic)
+├── utils/                # Dataset, Flax utilities, network definitions
+├── evaluation.py         # Evaluation loop (supports adaptive chunk selection)
+├── main.py               # Main training script (offline + online RL)
+├── main_online.py        # Online-only training script
+├── AQC_proposed_improvements.md   # Detailed proposal document
+├── PROGRESS_REPORT.md    # Current progress and next steps
+└── requirements.txt      # Dependencies
+```
+
+### Key Files
+
+| File | Description |
+|------|-------------|
+| `agents/aqc.py` | **Core contribution** — AQC agent with multi-scale critics ($Q^k$, $V^k$, $M^k$) and adaptive chunk selection via learned variance normalization |
+| `agents/acfql.py` | Baseline — original Q-Chunking with fixed chunk size |
+| `evaluation.py` | Modified to support `sample_actions_adaptive()` — automatically detects AQC and uses adaptive chunk selection during eval |
+| `main.py` | Training loop with `--chunk_sizes` flag for specifying candidate chunk sizes |
+
+---
+
+## How to Run
+
+### Installation
 ```bash
+git clone https://github.com/nonamehihi1/AQC_Finetune.git
+cd AQC_Finetune
 pip install -r requirements.txt
 ```
 
-
-## Datasets
-For robomimic, we assume the datasets are located at `~/.robomimic/lift/mh/low_dim_v15.hdf5`, `~/.robomimic/can/mh/low_dim_v15.hdf5`, and `~/.robomimic/square/mh/low_dim_v15.hdf5`. The datasets can be downloaded from https://robomimic.github.io/docs/datasets/robomimic_v0.1.html (under Method 2: Using Direct Download Links - Multi-Human (MH)).
-
-For cube-quadruple, we use the 100M-size offline dataset. It can be downloaded from https://github.com/seohongpark/horizon-reduction via
+### Run AQC (Our Method)
 ```bash
-wget -r -np -nH --cut-dirs=2 -A "*.npz" https://rail.eecs.berkeley.edu/datasets/ogbench/cube-quadruple-play-100m-v0/
+MUJOCO_GL=egl python main.py \
+    --agent=agents/aqc.py \
+    --agent.actor_type=distill-ddpg \
+    --run_group=AQC_LVN \
+    --env_name=cube-triple-play-singletask-task4-v0 \
+    --offline_steps=1000000 \
+    --online_steps=1000000 \
+    --horizon_length=5 \
+    --chunk_sizes=1,3,5 \
+    --seed=1
 ```
-and include this flag in the command line `--ogbench_dataset_dir=[realpath/to/your/cube-quadruple-play-100m-v0/]` to make sure it is using the 100M-size dataset.
 
-## Reproducing paper results
-
-We include the example command for all the methods we evaluate in our paper below. For `scene` and `puzzle-3x3` domains, use `--sparse=True`. We also release our plot data at [plot_data/README.md](plot_data/README.md).
-
+### Run Baseline (ACFQL — Fixed Chunk)
 ```bash
-# QC
-MUJOCO_GL=egl python main.py --run_group=reproduce --agent.actor_type=best-of-n --agent.actor_num_samples=32 --env_name=cube-triple-play-singletask-task2-v0 --sparse=False --horizon_length=5
-
-# BFN-n
-MUJOCO_GL=egl python main.py --run_group=reproduce --agent.actor_type=best-of-n --agent.actor_num_samples=4 --env_name=cube-triple-play-singletask-task2-v0 --sparse=False --horizon_length=5 --agent.action_chunking=False
-
-# BFN
-MUJOCO_GL=egl python main.py --run_group=reproduce --agent.actor_type=best-of-n --agent.actor_num_samples=4 --env_name=cube-triple-play-singletask-task2-v0 --sparse=False --horizon_length=1
-
-# QC-FQL
-MUJOCO_GL=egl python main.py --run_group=reproduce --agent.alpha=100 --env_name=cube-triple-play-singletask-task2-v0 --sparse=False --horizon_length=5
-
-# FQL-n
-MUJOCO_GL=egl python main.py --run_group=reproduce --agent.alpha=100 --env_name=cube-triple-play-singletask-task2-v0 --sparse=False --horizon_length=5 --agent.action_chunking=False
-
-# FQL
-MUJOCO_GL=egl python main.py --run_group=reproduce --agent.alpha=100 --env_name=cube-triple-play-singletask-task2-v0 --sparse=False --horizon_length=1
-
-# RLPD
-MUJOCO_GL=egl python main_online.py --env_name=cube-triple-play-singletask-task2-v0 --sparse=False --horizon_length=1 
-
-# RLPD-AC
-MUJOCO_GL=egl python main_online.py --env_name=cube-triple-play-singletask-task2-v0 --sparse=False --horizon_length=5
-
-# QC-RLPD
-MUJOCO_GL=egl python main_online.py --env_name=cube-triple-play-singletask-task2-v0 --sparse=False --horizon_length=5 --agent.bc_alpha=0.01
+MUJOCO_GL=egl python main.py \
+    --agent=agents/acfql.py \
+    --agent.actor_type=distill-ddpg \
+    --run_group=Baseline_ACFQL \
+    --env_name=cube-triple-play-singletask-task4-v0 \
+    --offline_steps=1000000 \
+    --online_steps=1000000 \
+    --horizon_length=5 \
+    --seed=1
 ```
 
-```
-@inproceedings{
-  li2025reinforcement,
-  title={Reinforcement Learning with Action Chunking},
-  author={Qiyang Li and Zhiyuan Zhou and Sergey Levine},
-  booktitle={The Thirty-ninth Annual Conference on Neural Information Processing Systems},
-  year={2025},
-  url={https://openreview.net/forum?id=XUks1Y96NR}
-}
-```
+---
+
+## References
+
+- **Q-Chunking**: Li et al., "Reinforcement Learning with Action Chunking", NeurIPS 2025. [[paper](https://arxiv.org/abs/2507.07969)] [[website](https://colinqiyangli.github.io/qc/)]
+- **FQL**: Park et al., "Flow Q-Learning". [[code](https://github.com/seohongpark/fql)]
+- **OGBench**: Park et al., "OGBench: Benchmarking Offline Goal-Conditioned RL". [[code](https://github.com/seohongpark/ogbench)]
 
 ## Acknowledgments
-This codebase is built on top of [FQL](https://github.com/seohongpark/fql). The two rlpd_* folders are directly taken from [RLPD](https://github.com/ikostrikov/rlpd).
+
+This codebase is built on top of [Q-Chunking](https://github.com/ColinQiyangLi/qc) and [FQL](https://github.com/seohongpark/fql). The two `rlpd_*` folders are directly taken from [RLPD](https://github.com/ikostrikov/rlpd).
