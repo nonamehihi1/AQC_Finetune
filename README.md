@@ -15,9 +15,9 @@ Q-Chunking (Li et al., NeurIPS 2025) đề xuất **action chunking cho RL**: th
 
 **Hạn chế chính**: QC sử dụng **kích thước chunk cố định** $h$ cho tất cả các trạng thái. Trong thực tế, một số trạng thái sẽ hưởng lợi từ chunk dài (ví dụ: các chuyển động tiếp cận trong không gian tự do), trong khi các trạng thái khác lại cần chunk ngắn (ví dụ: khi thao tác tiếp xúc chính xác với vật thể). Một $h$ cố định là không tối ưu — quá dài gây ra phản ứng chậm chạp gần các điểm tiếp xúc, quá ngắn làm lãng phí lợi ích của abstraction theo thời gian.
 
-### Đề Xuất Của Chúng Tôi: Adaptive Q-Chunking (AQC)
+### Adaptive Q-Chunking (AQC)
 
-Chúng tôi mở rộng QC với **khả năng lựa chọn chunk thích ứng phụ thuộc vào trạng thái**. Ý tưởng cốt lõi:
+Mở rộng QC với **khả năng lựa chọn chunk thích ứng phụ thuộc vào trạng thái**. Ý tưởng cốt lõi:
 
 1. **Multi-scale critics (Các mạng critic đa quy mô)**: Huấn luyện các mạng $Q^k(s, a_{1:k})$ riêng biệt cho mỗi kích thước chunk ứng viên $k \in K = \{1, 3, 5\}$, cùng với mạng giá trị $V^k(s)$ và mạng moment bậc hai $M^k(s)$.
 
