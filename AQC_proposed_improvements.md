@@ -265,149 +265,46 @@ Ví dụ:
 
 ---
 
-## 4. Chuyển từ Open-loop sang Closed-loop Low-level Executor
+## 4. Optimism-in-the-Face-of-Uncertainty (UCB-Adaptive-Chunking)
 
-### Vấn đề hiện tại
+### Vấn đề hiện tại (Nhiễu lấn át tín hiệu)
 
-Sau khi AQC lựa chọn một chuỗi hành động:
+Theo Mệnh đề 5.1 (Prop 5.1) của Q-Chunking gốc, khi agent ở xa mục tiêu, giá trị kỳ vọng $V^h(s) \approx 0$. Mọi giá trị $Q^k$ đều có advantage gần bằng 0. Sai khác giữa các $k$ lúc này chỉ là **nhiễu (noise) do mạng neural chưa học chính xác** ($\sigma$), chứ không phải tín hiệu thật ($\epsilon$).
 
-$$
-a_{t:t+k}
-$$
+Trong trường hợp này, selector của AQC gốc sẽ **chọn ngẫu nhiên** giữa $k=1, 5, 10...$. Việc chọn ngẫu nhiên không giúp agent chủ động khám phá không gian hiệu quả. Nếu đã phải "đoán" trong vùng không biết, chúng ta nên ưu tiên thử những chân trời (horizon) mà mô hình **biết ít nhất** để nhanh chóng thu thập dữ liệu và giảm thiểu độ bất định. 
 
-chuỗi này được thực thi theo kiểu **open-loop**.
+### Đề xuất: UCB (Upper Confidence Bound) cho Temporal Abstraction
 
-Điều đó có nghĩa là hệ thống sinh ra một chuỗi hành động rồi thực thi nó mà không liên tục điều chỉnh dựa trên trạng thái thực tế trong quá trình thực hiện.
-
-Điều này đặc biệt bất lợi trong các tình huống có tương tác vật lý.
-
-Ví dụ:
-
-- robot tiến gần vật thể;
-- vật thể có vị trí hơi khác dự kiến;
-- robot bị sai lệch quỹ đạo;
-- môi trường có nhiễu hoặc chuyển động ngoài dự đoán.
-
-Trong những trường hợp này, việc thực thi một chunk dài có thể khiến robot phản ứng chậm.
-
-Ngược lại, nếu giảm xuống `k = 1`, AQC phải gọi policy liên tục. Điều này lại trở nên tốn kém nếu policy $\pi_\beta$ là một mô hình Flow Matching nặng, vốn được thiết kế để sinh ra cả chuỗi hành động dài `h` bước.
-
-### Đề xuất: Hierarchical Execution
-
-Tách hệ thống thành hai tầng:
-
-```text
-                 HIGH-LEVEL
-                    AQC
-                     │
-                     ▼
-          Kế hoạch / trajectory mẫu
-                     │
-                     ▼
-              a*_{t:t+k}
-                     │
-                     ▼
-              LOW-LEVEL
-          Closed-loop Controller
-                     │
-                     ▼
-               Robot / Env
-                     ▲
-                     │
-              State feedback
-```
-
-### Tầng 1 — AQC High-level
-
-AQC vẫn chịu trách nhiệm:
-
-- đánh giá các action chunk;
-- lựa chọn horizon phù hợp;
-- lập kế hoạch quỹ đạo;
-- sinh ra một chuỗi mục tiêu/trajectory mẫu.
-
-Ví dụ:
+Ý tưởng cốt lõi là áp dụng nguyên lý **Optimism-in-the-face-of-uncertainty** vào việc lựa chọn độ dài chunk $k$. Chúng ta sẽ định nghĩa một điểm số đánh giá mới:
 
 $$
-\tau^*
-=
-\left[
-s_t^*,s_{t+1}^*,\ldots,s_{t+k}^*
-\right]
+\text{score}_{\text{UCB}}(k, a) = \underbrace{\frac{Q^k - V^k}{\gamma^k}}_{\text{Exploit: Tín hiệu thật}} + \beta(t) \cdot \underbrace{U^k(s, a_{t:t+k})}_{\text{Explore: Độ bất định}}
 $$
 
-hoặc một chuỗi action:
+Điểm số này là sự kết hợp của:
+1. **Advantage (Exploit)**: Khai thác những hành động/chunk size đã biết là tốt.
+2. **Uncertainty Bonus (Explore)**: Phần thưởng khuyến khích thử nghiệm những vùng không gian/chunk size chưa chắc chắn.
+
+### Chi tiết các thành phần
+
+#### 1. Đo lường Uncertainty bằng Ensemble
+Thay vì dùng các phương pháp phức tạp, ta tận dụng chính hạ tầng **Ensemble Critic** (với $N_Q = 2$) vốn đã có sẵn trong Flow Q-Learning (FQL):
 
 $$
-a_{t:t+k}^*
+U^k(s_t, a_{t:t+k}) := \operatorname{std}_{m=1}^{M}\left[\frac{Q^k_{\psi,m}(s_t, a_{t:t+k})}{\gamma^k}\right]
 $$
 
-Đây được xem như **reference trajectory** cho tầng điều khiển phía dưới.
+*Lưu ý:* Việc chia cho $\gamma^k$ là cực kỳ quan trọng để khắc phục lỗi **discount-scale mismatch**. Nó đưa độ bất định của mọi $k$ về cùng một thang đo công bằng (nếu không, $k$ lớn sẽ tự động có std nhỏ do bị chiết khấu $\gamma^k$).
 
-### Tầng 2 — Closed-loop Low-level Controller
+#### 2. Lịch trình $\beta(t)$ (Dynamic Exploration)
+Hệ số khám phá $\beta(t)$ sẽ được giảm dần theo thời gian huấn luyện online (ví dụ: Linear Decay):
+- **Giai đoạn đầu**: $\beta$ lớn, thúc đẩy agent mạo hiểm thử nghiệm các $k$ khác nhau.
+- **Giai đoạn cuối**: $\beta \to 0$, agent hội tụ về exploitation khi đã có đủ dữ liệu đáng tin cậy.
 
-Thay vì gửi trực tiếp các action đã sinh tới động cơ theo kiểu open-loop, một controller tốc độ cao sẽ liên tục quan sát trạng thái thực tế:
+#### 3. Chốt chặn Sample Z-Score
+Sau khi tính được $\text{score}_{\text{UCB}}(k, a)$ cho mọi ứng viên, chúng ta vẫn áp dụng bước chuẩn hóa Z-score cuối cùng trước khi so sánh `argmax`. Điều này ngăn chặn tình trạng một thang đo $k$ có variance tự nhiên lớn (dù đã chia $\gamma$) liên tục "áp đảo" các $k$ khác, giữ lại tính ổn định đã được chứng minh thực nghiệm của bài báo gốc.
 
-$$
-s_{t+i}
-$$
-
-và điều chỉnh action để robot bám theo trajectory mục tiêu.
-
-Có thể sử dụng:
-
-- PD Controller;
-- PID Controller;
-- Learned PD Controller;
-- MLP nhỏ;
-- hoặc một policy lightweight được tối ưu cho inference tốc độ cao.
-
-Ví dụ, controller có thể hoạt động ở tần số:
-
-$$
-500\text{ Hz}
-$$
-
-Trong khi AQC chỉ cần cập nhật trajectory ở tần số thấp hơn.
-
-Một dạng điều khiển đơn giản có thể là:
-
-$$
-a_t
-=
-K_p(s_t^*-s_t)
-+
-K_d(\dot{s}_t^*-\dot{s}_t)
-$$
-
-Trong đó:
-
-- $s_t^*$: trạng thái mục tiêu từ trajectory của AQC.
-- $s_t$: trạng thái thực tế.
-- $\dot{s}_t^*$: vận tốc mục tiêu.
-- $\dot{s}_t$: vận tốc thực tế.
-- $K_p,K_d$: hệ số điều khiển.
-
-### Lợi ích
-
-- **Tách planning và control:** AQC tập trung vào quyết định dài hạn, low-level controller tập trung vào phản ứng tức thời.
-- **Closed-loop:** controller có thể sửa sai dựa trên trạng thái thực tế.
-- **Phản ứng nhanh:** low-level controller có thể chạy ở tần số rất cao.
-- **Giảm tải cho AQC:** không cần re-query policy nặng ở mọi timestep.
-- **Cho phép sử dụng chunk dài hơn:** ngay cả khi AQC chọn `k` lớn, low-level controller vẫn có thể điều chỉnh liên tục khi robot tiến gần vật thể hoặc gặp nhiễu.
-
-### Điểm cần lưu ý
-
-Ý tưởng này không có nghĩa là có thể tăng `k` tùy ý. Nếu AQC tạo ra một trajectory quá sai hoặc không khả thi, low-level controller không thể luôn luôn "cứu" được hệ thống.
-
-Do đó, cần đánh giá thực nghiệm sự đánh đổi giữa:
-
-$$
-\text{Planning Horizon}
-\quad\leftrightarrow\quad
-\text{Tracking Error}
-\quad\leftrightarrow\quad
-\text{Reactivity}
-$$
-
-Một kiến trúc hợp lý là để AQC quyết định **mục tiêu/trajectory ở high-level**, còn low-level controller đảm nhiệm việc **tracking và phản ứng với nhiễu ở tần số cao**.
+### Ưu điểm vượt trội so với các phương pháp cũ
+- **Tính đột phá (Novelty)**: Lần đầu tiên đưa nguyên lý UCB kinh điển từ Action Selection sang việc ra quyết định ở không gian thời gian (Temporal Abstraction).
+- **Chi phí bằng 0 (Zero-overhead)**: Tái sử dụng hoàn toàn hạ tầng Ensemble Critic có sẵn, không đẻ thêm bất kỳ tham số mạng nào (trái ngược với LVN).
+- **Sửa đúng "bug" lý thuyết**: Bù đắp hoàn hảo lỗ hổng "random selection in flat regions" được chỉ ra trong Prop 5.1 của bài báo Q-Chunking gốc.
