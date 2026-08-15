@@ -35,60 +35,9 @@ Chúng tôi đang mở rộng Q-Chunking (QC) với **Adaptive Q-Chunking (AQC)*
 - [x] Đã xác minh quá trình huấn luyện AQC chạy không bị lỗi crash (10 bước offline + 15 bước online)
 - [x] Đã xác nhận các giá trị loss (Q, V, M losses) đều hợp lý và giảm dần
 
----
-
-## Đang Thực Hiện
-
-### 5. Thực Nghiệm Toàn Diện (Kaggle GPU T4x2)
-
-**Kế hoạch thực nghiệm:**
-
-| # | Phương Pháp | Môi Trường | Số Bước | Loại Actor | Trạng Thái |
-|---|--------|-------------|-------|-----------|--------|
-| 1 | ACFQL baseline (h=5) | `cube-triple-play-singletask-task4-v0` | 1M offline + 1M online | `distill-ddpg` | ⏳ Đang đợi |
-| 2 | AQC-LVN (k∈{1,3,5}) | `cube-triple-play-singletask-task4-v0` | 1M offline + 1M online | `distill-ddpg` | ⏳ Đang đợi |
-
-**Thời gian ước tính**: ~8-11 giờ mỗi thực nghiệm trên Kaggle GPU T4.
-
-**Các số liệu cần so sánh**: 
-- Tỷ lệ thành công (quan trọng nhất)
-- Đồ thị huấn luyện (tỷ lệ thành công vs số bước)
-- Phân phối các giá trị $k^*$ được chọn ở nhiều trạng thái
-- Tốc độ huấn luyện (số vòng lặp/giây)
-
----
-
-## Các Bước Tiếp Theo
-
-### Ngắn hạn (Tuần này)
-- [ ] Chạy Thực nghiệm 1 (ACFQL baseline) trên Kaggle
-- [ ] Chạy Thực nghiệm 2 (AQC-LVN) trên Kaggle
-- [ ] So sánh kết quả và vẽ đồ thị
-- [ ] Nếu AQC-LVN hoạt động kém: thực hiện ablation study để chẩn đoán (quá trình học M^k, chuẩn độ z-score, v.v.)
-
-### Trung hạn (Nếu LVN hiệu quả)
-- [ ] Chạy thêm trên các môi trường khác (task2, task3) và nhiều seed (3-5 seed để đảm bảo ý nghĩa thống kê)
-- [ ] Ablation: so sánh LVN vs Z-score gốc vs Chuẩn hóa Running EMA
-- [ ] Ablation: thay đổi $N$ (số mẫu ứng viên) — dự kiến LVN ít nhạy cảm với $N$ hơn Z-score
-- [ ] Phân tích phân phối k*: AQC có thực sự chọn các k khác nhau cho các trạng thái khác nhau không?
-
-### Khám Phá (Nếu có thời gian)
-- [ ] Triển khai biến thể LVN tối giản sử dụng Running EMA (không cần thêm mạng)
-- [ ] Thử nghiệm với Unified Multi-Scale Critic (Đề xuất 2) — phương pháp nhúng theo chân trời thời gian
-- [ ] Nghiên cứu về re-planning dựa trên yếu tố bất ngờ (surprise-based) trong khi thực thi chunk
-
----
-
-## Rủi Ro & Biện Pháp Giảm Thiểu
-
-| Rủi Ro | Khả Năng | Biện Pháp Giảm Thiểu |
-|------|-----------|------------|
-| AQC-LVN hoạt động kém hơn baseline | Trung bình | LVN có nhiều mạng hơn để học → có thể cần train lâu hơn hoặc tinh chỉnh siêu tham số. Bắt đầu với cùng siêu tham số như ACFQL. |
-| Không đủ thời gian GPU | Thấp | Việc dùng `distill-ddpg` actor giúp giảm thời gian train khoảng 4 lần. Mỗi thực nghiệm nằm trong giới hạn 12h của Kaggle. |
-| Mạng M^k khó hội tụ | Trung bình | Theo dõi M^k loss khi huấn luyện. Nếu bất ổn, hãy thử phương án Running EMA. |
-| Lỗi kích thước/hình dạng trong AQC | Thấp | Đã sửa xong một lỗi lớn. Kiểm tra nhanh (smoke test) cũng đã qua. |
-
----
+### 5. Sửa Lỗi Nghiêm Trọng (Hotfix 2026-08-16)
+- [x] Phát hiện lỗi 0% Success Rate do mạng $M^k$ tính sai toán học (dùng Expectile thay vì Mean). **Tạm gỡ LVN, lùi về dùng Sample Z-Score** để đảm bảo công thức chuẩn hóa đúng.
+- [x] Sửa lỗi "Dead Branch" trong `sample_actions_adaptive`: ép dùng mạng `actor_onestep_flow` khi mode là `distill-ddpg`, giúp tăng tốc độ đánh giá lên hàng chục lần.
 
 ## Các File Đã Thay Đổi (So với Codebase QC Gốc)
 

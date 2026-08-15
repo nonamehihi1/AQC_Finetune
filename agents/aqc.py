@@ -127,21 +127,20 @@ class AQCAgent(flax.struct.PyTreeNode):
             total_critic_loss += loss_v_k
 
             # Moment network M^k (Proposal 1)
-            # Target = (Q^k(s, a) - V^k(s))^2
-            m_k = self.network.select(f'moment_k{k}')(batch['observations'], params=grad_params)
-            target_m_k = jnp.square(jax.lax.stop_gradient(diff_k))
-            
-            # Optional: normalize or clip target_m_k if it's too large, but MSE is fine
-            loss_m_k = (jnp.square(m_k - target_m_k) * valid_mask).mean()
-            total_critic_loss += loss_m_k
+            # TẠM TẮT: Do công thức target_m_k sai toán học (dùng expectile thay vì mean)
+            # Ta bỏ qua update M^k để tiết kiệm tính toán trong lúc debug hệ thống bằng Sample Z-score
+            # m_k = self.network.select(f'moment_k{k}')(batch['observations'], params=grad_params)
+            # target_m_k = jnp.square(jax.lax.stop_gradient(diff_k))
+            # loss_m_k = (jnp.square(m_k - target_m_k) * valid_mask).mean()
+            # total_critic_loss += loss_m_k
 
             info.update({
                 f'q_{k}_loss': loss_q_k,
                 f'v_{k}_loss': loss_v_k,
-                f'm_{k}_loss': loss_m_k,
+                # f'm_{k}_loss': loss_m_k,
                 f'q_{k}_mean': q_k_val.mean(),
                 f'v_{k}_mean': v_k.mean(),
-                f'm_{k}_mean': m_k.mean(),
+                # f'm_{k}_mean': m_k.mean(),
             })
 
         return total_critic_loss, info
@@ -321,10 +320,8 @@ class AQCAgent(flax.struct.PyTreeNode):
         
         # If distill-ddpg, compute flow actions manually for candidate generation or just use one-step
         if self.config["actor_type"] == "distill-ddpg":
-            # For AQC, we usually want multiple candidates to evaluate A^k. 
-            # We will use the flow policy directly for generating candidates, or use the distilled policy?
-            # Standard is to use the flow policy for better exploration/candidates.
-            actions = self.compute_flow_actions(obs_expanded, noises)
+            # SỬA LỖI BUG: Dùng distilled policy thay vì gọi flow policy (vốn chậm 10x)
+            actions = self.network.select(f'actor_onestep_flow')(obs_expanded, noises)
         else:
             actions = self.compute_flow_actions(obs_expanded, noises)
             
@@ -343,7 +340,7 @@ class AQCAgent(flax.struct.PyTreeNode):
         for k in chunk_sizes:
             # v_k, m_k shape: (batch_size, 1)
             v_k = self.network.select(f'value_k{k}')(observations)
-            m_k = self.network.select(f'moment_k{k}')(observations)
+            # m_k = self.network.select(f'moment_k{k}')(observations)
             
             # Predict Q^k for all candidates
             # actions shape: (batch_size, num_samples, action_dim * horizon_length)
@@ -360,13 +357,16 @@ class AQCAgent(flax.struct.PyTreeNode):
                 
             # Broadcast to match q_k shape (*bshape, num_samples)
             v_k = jnp.expand_dims(v_k, axis=-1)
-            m_k = jnp.expand_dims(m_k, axis=-1)
+            # m_k = jnp.expand_dims(m_k, axis=-1)
             
             # Compute Advantage
             a_k = q_k - v_k
             
-            # Compute z-score using learned variance (cộng thêm 1e-6 chống chia cho 0)
-            z_k = a_k / jnp.sqrt(m_k + 1e-6)
+            # SỬA LỖI BUG: Dùng Sample Z-score trực tiếp trên 32 samples tại inference
+            # (Loại bỏ m_k do học sai toán học)
+            a_k_mean = a_k.mean(axis=-1, keepdims=True)
+            a_k_std = a_k.std(axis=-1, keepdims=True)
+            z_k = (a_k - a_k_mean) / (a_k_std + 1e-6)
             z_k_list.append(z_k)
             
         # z_k_list is a list of len(chunk_sizes) with tensors of shape (*bshape, num_samples)

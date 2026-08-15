@@ -7,6 +7,16 @@
 
 ---
 
+## 📑 Tài liệu Dự án (Project Documentation)
+
+Để người đọc dễ dàng theo dõi, dự án này bao gồm các tài liệu sau với vai trò được phân định rõ ràng:
+
+- **`README.md` (File này)**: Tổng quan về dự án, kiến trúc hệ thống và hướng dẫn cài đặt, chạy code.
+- **`AQC_proposed_improvements.md`**: Lưu trữ các **Ý tưởng (Ideas)** cải tiến ban đầu (4 đề xuất nâng cấp từ Q-Chunking).
+- **`PROGRESS_REPORT.md`**: Bản **Báo cáo tiến độ (Progress)** ghi chép các công việc đã hoàn thành và lịch sử cập nhật code.
+
+---
+
 ## Ý Tưởng Tổng Quan (General Idea)
 
 ### Bối cảnh: Q-Chunking (QC)
@@ -66,7 +76,7 @@ trong đó $M^k(s) \approx \mathbb{E}_{a \sim \pi}[(A^k(s,a))^2]$ là moment b�
 .
 ├── agents/
 │   ├── acfql.py          # ACFQL — Q-Chunking baseline (chunk cố định)
-│   ├── aqc.py            # AQC — Adaptive Q-Chunking với LVN (phương pháp của chúng tôi)
+│   ├── aqc.py            # AQC — Adaptive Q-Chunking (phương pháp của chúng tôi)
 │   ├── acrlpd.py         # Agent dựa trên RLPD
 │   └── model.py          # Kiến trúc mạng dùng chung
 ├── envs/                 # Các tiện ích môi trường (OGBench, Robomimic)
@@ -74,8 +84,9 @@ trong đó $M^k(s) \approx \mathbb{E}_{a \sim \pi}[(A^k(s,a))^2]$ là moment b�
 ├── evaluation.py         # Vòng lặp đánh giá (hỗ trợ chọn chunk thích ứng)
 ├── main.py               # Script huấn luyện chính (offline + online RL)
 ├── main_online.py        # Script huấn luyện chỉ dùng online
-├── AQC_proposed_improvements.md   # Tài liệu chi tiết các đề xuất
-├── PROGRESS_REPORT.md    # Tiến độ hiện tại và các bước tiếp theo
+├── AQC_proposed_improvements.md   # [Ý TƯỞNG] Tài liệu chi tiết các đề xuất
+├── AQC_past_analysis.md           # [PHÂN TÍCH] Đánh giá sâu và tìm lỗi
+├── PROGRESS_REPORT.md             # [TIẾN ĐỘ] Báo cáo các công việc đã làm
 └── requirements.txt      # Các thư viện phụ thuộc
 ```
 
