@@ -126,21 +126,19 @@ class AQCAgent(flax.struct.PyTreeNode):
             loss_v_k = (expectile_loss(diff_k, self.config['expectile']) * valid_mask).mean()
             total_critic_loss += loss_v_k
 
-            # Moment network M^k (Proposal 1)
-            # TẠM TẮT: Do công thức target_m_k sai toán học (dùng expectile thay vì mean)
-            # Ta bỏ qua update M^k để tiết kiệm tính toán trong lúc debug hệ thống bằng Sample Z-score
-            # m_k = self.network.select(f'moment_k{k}')(batch['observations'], params=grad_params)
-            # target_m_k = jnp.square(jax.lax.stop_gradient(diff_k))
-            # loss_m_k = (jnp.square(m_k - target_m_k) * valid_mask).mean()
-            # total_critic_loss += loss_m_k
+            # Moment network M^k: learns E[(Q^k - V^k)^2] for variance normalization
+            m_k = self.network.select(f'moment_k{k}')(batch['observations'], params=grad_params)
+            target_m_k = jnp.square(jax.lax.stop_gradient(diff_k))
+            loss_m_k = (jnp.square(m_k - target_m_k) * valid_mask).mean()
+            total_critic_loss += loss_m_k
 
             info.update({
                 f'q_{k}_loss': loss_q_k,
                 f'v_{k}_loss': loss_v_k,
-                # f'm_{k}_loss': loss_m_k,
+                f'm_{k}_loss': loss_m_k,
                 f'q_{k}_mean': q_k_val.mean(),
                 f'v_{k}_mean': v_k.mean(),
-                # f'm_{k}_mean': m_k.mean(),
+                f'm_{k}_mean': m_k.mean(),
             })
 
         return total_critic_loss, info
@@ -318,29 +316,25 @@ class AQCAgent(flax.struct.PyTreeNode):
         )
         obs_expanded = jnp.repeat(observations[..., None, :], self.config["actor_num_samples"], axis=-2)
         
-        # Dùng trực tiếp Flow Matching policy (Euler integration) để sinh N=32 diverse candidates
-        # Đây là chuẩn xác 100% so với bài báo gốc
-        actions = self.compute_flow_actions(obs_expanded, noises)
+        # Use distill-ddpg (one-step) if available, otherwise use flow matching
+        if self.config["actor_type"] == "distill-ddpg":
+            actions = self.network.select('actor_onestep_flow')(obs_expanded, noises)
+        else:
+            actions = self.compute_flow_actions(obs_expanded, noises)
             
         actions = jnp.clip(actions, -1, 1)
         
         # 2. Evaluate A^k and z_k for each k
         chunk_sizes = self.config['chunk_sizes']
         
-        # Evaluate V^k and M^k for state
-        # Because obs_expanded has shape (batch_size, num_samples, state_dim),
-        # but V^k and M^k only depend on state, we can evaluate on original observations
-        # and expand.
-        
         z_k_list = []
         
         for k in chunk_sizes:
-            # v_k, m_k shape: (batch_size, 1)
+            # v_k shape: (batch_size,), m_k shape: (batch_size,)
             v_k = self.network.select(f'value_k{k}')(observations)
-            # m_k = self.network.select(f'moment_k{k}')(observations)
+            m_k = self.network.select(f'moment_k{k}')(observations)
             
             # Predict Q^k for all candidates
-            # actions shape: (batch_size, num_samples, action_dim * horizon_length)
             actions_k = jnp.reshape(
                 jnp.reshape(actions, (*actions.shape[:-1], self.config['horizon_length'], self.config['action_dim']))[..., :k, :],
                 (*actions.shape[:-1], k * self.config['action_dim'])
@@ -348,22 +342,18 @@ class AQCAgent(flax.struct.PyTreeNode):
             
             q_k = self.network.select(f'critic_k{k}')(obs_expanded, actions=actions_k)
             if self.config['q_agg'] == 'min':
-                q_k = q_k.min(axis=0) # shape: (*bshape, num_samples)
+                q_k = q_k.min(axis=0)
             else:
                 q_k = q_k.mean(axis=0)
                 
-            # Broadcast to match q_k shape (*bshape, num_samples)
+            # Broadcast v_k and m_k to match q_k shape (*bshape, num_samples)
             v_k = jnp.expand_dims(v_k, axis=-1)
-            # m_k = jnp.expand_dims(m_k, axis=-1)
+            m_k = jnp.expand_dims(m_k, axis=-1)
             
-            # Compute Advantage
+            # Compute Advantage and normalize with learned variance (M^k)
             a_k = q_k - v_k
-            
-            # SỬA LỖI BUG: Dùng Sample Z-score trực tiếp trên 32 samples tại inference
-            # (Loại bỏ m_k do học sai toán học)
-            a_k_mean = a_k.mean(axis=-1, keepdims=True)
-            a_k_std = a_k.std(axis=-1, keepdims=True)
-            z_k = (a_k - a_k_mean) / (a_k_std + 1e-6)
+            sigma_k = jnp.sqrt(jnp.maximum(m_k, 1e-6))
+            z_k = a_k / sigma_k
             z_k_list.append(z_k)
             
         # z_k_list is a list of len(chunk_sizes) with tensors of shape (*bshape, num_samples)
