@@ -318,12 +318,9 @@ class AQCAgent(flax.struct.PyTreeNode):
         )
         obs_expanded = jnp.repeat(observations[..., None, :], self.config["actor_num_samples"], axis=-2)
         
-        # If distill-ddpg, compute flow actions manually for candidate generation or just use one-step
-        if self.config["actor_type"] == "distill-ddpg":
-            # SỬA LỖI BUG: Dùng distilled policy thay vì gọi flow policy (vốn chậm 10x)
-            actions = self.network.select(f'actor_onestep_flow')(obs_expanded, noises)
-        else:
-            actions = self.compute_flow_actions(obs_expanded, noises)
+        # Dùng trực tiếp Flow Matching policy (Euler integration) để sinh N=32 diverse candidates
+        # Đây là chuẩn xác 100% so với bài báo gốc
+        actions = self.compute_flow_actions(obs_expanded, noises)
             
         actions = jnp.clip(actions, -1, 1)
         
