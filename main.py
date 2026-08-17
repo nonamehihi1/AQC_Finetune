@@ -163,11 +163,15 @@ def main(_):
     )
 
     offline_init_time = time.time()
-    # Offline RL
-    for i in tqdm.tqdm(range(1, FLAGS.offline_steps + 1)):
-        log_step += 1
+    
+    # Offline RL (Batched for massive speedup)
+    UPDATE_STEPS = 50
+    pbar = tqdm.tqdm(total=FLAGS.offline_steps)
+    for i in range(1, FLAGS.offline_steps + 1, UPDATE_STEPS):
+        current_steps = min(UPDATE_STEPS, FLAGS.offline_steps - i + 1)
+        log_step += current_steps
 
-        if FLAGS.ogbench_dataset_dir is not None and FLAGS.dataset_replace_interval != 0 and i % FLAGS.dataset_replace_interval == 0:
+        if FLAGS.ogbench_dataset_dir is not None and FLAGS.dataset_replace_interval != 0 and (i - 1) // FLAGS.dataset_replace_interval < (i - 1 + current_steps) // FLAGS.dataset_replace_interval:
             dataset_idx = (dataset_idx + 1) % len(dataset_paths)
             print(f"Using new dataset: {dataset_paths[dataset_idx]}", flush=True)
             train_dataset, val_dataset = make_ogbench_env_and_datasets(
@@ -179,20 +183,24 @@ def main(_):
             )
             train_dataset = process_train_dataset(train_dataset)
 
-        batch = train_dataset.sample_sequence(config['batch_size'], sequence_length=FLAGS.horizon_length, discount=discount)
+        if current_steps > 1:
+            batch = train_dataset.sample_sequence(config['batch_size'] * current_steps, sequence_length=FLAGS.horizon_length, discount=discount)
+            batch = jax.tree.map(lambda x: x.reshape((current_steps, config["batch_size"]) + x.shape[1:]), batch)
+            agent, offline_info = agent.batch_update(batch)
+        else:
+            batch = train_dataset.sample_sequence(config['batch_size'], sequence_length=FLAGS.horizon_length, discount=discount)
+            agent, offline_info = agent.update(batch)
 
-        agent, offline_info = agent.update(batch)
-
-        if i % FLAGS.log_interval == 0:
+        if (i - 1) // FLAGS.log_interval < (i - 1 + current_steps) // FLAGS.log_interval:
             logger.log(offline_info, "offline_agent", step=log_step)
         
         # saving
-        if FLAGS.save_interval > 0 and i % FLAGS.save_interval == 0:
+        if FLAGS.save_interval > 0 and (i - 1) // FLAGS.save_interval < (i - 1 + current_steps) // FLAGS.save_interval:
             save_agent(agent, FLAGS.save_dir, log_step)
 
         # eval
-        if i == FLAGS.offline_steps - 1 or \
-            (FLAGS.eval_interval != 0 and i % FLAGS.eval_interval == 0):
+        if log_step >= FLAGS.offline_steps or \
+            (FLAGS.eval_interval != 0 and (i - 1) // FLAGS.eval_interval < (i - 1 + current_steps) // FLAGS.eval_interval):
             # during eval, the action chunk is executed fully
             eval_info, _, _ = evaluate(
                 agent=agent,
@@ -203,6 +211,9 @@ def main(_):
                 video_frame_skip=FLAGS.video_frame_skip,
             )
             logger.log(eval_info, "eval", step=log_step)
+            
+        pbar.update(current_steps)
+    pbar.close()
 
     # transition from offline to online
     replay_buffer = ReplayBuffer.create_from_initial_dataset(
